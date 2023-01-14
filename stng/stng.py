@@ -23,7 +23,8 @@ from .search_result import Vec
 
 _script_dir = os.path.dirname(os.path.realpath(__file__))
 
-DEFAULT_MODEL = 'sentence-transformers/all-MiniLM-L6-v2'
+# DEFAULT_MODEL = 'sentence-transformers/all-MiniLM-L6-v2'
+DEFAULT_MODEL = 'sentence-transformers/stsb-xlm-r-multilingual'
 VERSION = importlib.metadata.version("stng")
 DEFAULT_TOP_N = 20
 DEFAULT_WINDOW_SIZE = 20
