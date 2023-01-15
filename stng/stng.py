@@ -3,6 +3,7 @@ from typing import Iterable, Iterator, List, Optional
 from glob import iglob
 import io
 import importlib
+from itertools import groupby
 import os
 import platform
 import sys
@@ -16,8 +17,7 @@ from sentence_transformers import SentenceTransformer
 
 from .iter_funcs import chunked_iter, sliding_window_iter
 from .scanners import Scanner, ScanError, ScanErrorNotFile
-from .search_result import ANSI_ESCAPE_CLEAR_CUR_LINE, SLPPD, excerpt_text, trim_search_results, print_intermediate_search_result, prune_overlapped_paragraphs
-from .text_funcs import includes_all_texts, includes_any_of_texts
+from .search_result import ANSI_ESCAPE_CLEAR_CUR_LINE, SLPLD, excerpt_text, trim_search_results, print_intermediate_search_result, prune_overlapped_paragraphs
 from .search_result import Vec
 
 
@@ -41,9 +41,6 @@ class CLArgs(InitAttrsWKwArgs):
     top_n: int
     paragraph_search: bool
     window: int
-    include: List[str]
-    exclude: List[str]
-    min_length: int
     excerpt_length: int
     header: bool
     workers: Optional[int]
@@ -56,8 +53,8 @@ class CLArgs(InitAttrsWKwArgs):
 __doc__: str = """Sentence-transformer-based Natural-language grep.
 
 Usage:
-  stng [options] [-i TEXT]... [-e TEXT]... <query> <file>...
-  stng [options] [-i TEXT]... [-e TEXT]... -f QUERYFILE <file>...
+  stng [options]  <query> <file>...
+  stng [options] -f QUERYFILE <file>...
   stng --help
   stng --version
 
@@ -68,9 +65,6 @@ Options:
   --paragraph-search, -p        Search paragraphs in documents.
   --window=NUM, -w NUM          Line window size [default: {dws}].
   --query-file=QUERYFILE, -f QUERYFILE  Read query text from the file.
-  --include=TEXT, -i TEXT       Requires containing the specified text.
-  --exclude=TEXT, -e TEXT       Requires not containing the specified text.
-  --min-length=CHARS, -l CHARS  Paragraphs shorter than this get a penalty [default: {dplt}].
   --excerpt-length=CHARS, -t CHARS      Length of the text to be excerpted [default: {dec}].
   --header, -H                  Print the header line.
   --workers=WORKERS, -j WORKERS         Worker process.
@@ -125,10 +119,46 @@ def expand_file_iter(target_files: Iterable[str], windows_style: bool = False) -
                 yield f
 
 
-def find_similar_paragraphs(query_vec: Vec, doc_files: Iterable[str], model: SentenceTransformer, a: CLArgs) -> List[SLPPD]:
+def find_similar_paragraphs(query_vec: Vec, doc_files: Iterable[str], model: SentenceTransformer, a: CLArgs) -> List[SLPLD]:
     scanner = Scanner()
 
-    search_results: List[SLPPD] = []
+    FLUSH_PARA_SIZE = 1000
+
+    search_results: List[SLPLD] = []
+    def flush_para(df_pos_paras):
+        # for each paragraph in the file, calculate the similarity to the query
+        para_texts = ['\n'.join(lines[pos[0] : pos[1]]) for _df, pos, lines in df_pos_paras]
+        para_vecs = model.encode(para_texts)
+
+        i = -1
+        for df, g in groupby(df_pos_paras, key=lambda dpp: dpp[0]):
+            slppds: List[SLPLD] = []
+            for _df, pos, lines in g:
+                i += 1
+                para_vec = para_vecs[i]
+                sim = np.inner(query_vec, para_vec)
+                para_len = sum(len(L) for L in lines[pos[0] : pos[1]])
+                slppds.append((sim, para_len, pos, lines, df))
+
+            if not slppds:
+                continue  # for df
+
+            # pick up paragraphs for the file
+            if a.paragraph_search:
+                slppds = prune_overlapped_paragraphs(slppds)  # remove paragraphs that overlap
+                slppds.sort(reverse=True)
+                del slppds[a.top_n :]
+            else:
+                slppds = [max(slppds)]  # extract only the most similar paragraphs in the file
+
+            # update search results
+            search_results.extend(slppds)
+            if len(search_results) >= a.top_n:
+                trim_search_results(search_results, a.top_n)
+
+        assert i == len(df_pos_paras) - 1
+
+    df_para_datas = []
     for df in doc_files:
         if a.vv:
             print(ANSI_ESCAPE_CLEAR_CUR_LINE + "> reading: %s" % df, file=sys.stderr, flush=True)
@@ -143,45 +173,17 @@ def find_similar_paragraphs(query_vec: Vec, doc_files: Iterable[str], model: Sen
             continue
 
         # extract paragraphs
-        pos_para_lens = []
         for pos in sliding_window_iter(len(lines), a.window):
-            para = lines[pos[0] : pos[1]]
-            para_len = sum(len(L) for L in para)
-            if a.include and not includes_all_texts(para, a.include) or a.exclude and includes_any_of_texts(para, a.exclude):
-                continue  # for pos, para
+            df_para_datas.append((df, pos, lines))
 
-            pos_para_lens.append((pos, para, para_len))
+        if len(df_para_datas) >= FLUSH_PARA_SIZE:
+            flush_para(df_para_datas)
+            df_para_datas.clear()
 
-        # for each paragraph in the file, calculate the similarity to the query
-        para_texts = ['\n'.join(para) for pos, para, para_lens in pos_para_lens]
-        para_vecs = model.encode(para_texts)
+    if df_para_datas:
+        flush_para(df_para_datas)
+        df_para_datas.clear()
 
-        slppds: List[SLPPD] = []
-        for ((pos, para, para_len), para_vec) in zip(pos_para_lens, para_vecs):
-            sim = np.inner(query_vec, para_vec)
-
-            if para_len < a.min_length:  # penalty for short paragraphs
-                sim = sim * para_len / a.min_length
-
-            slppds.append((sim, para_len, pos, lines, df))
-
-        if not slppds:
-            continue  # for df
-
-        # pick up paragraphs for the file
-        if a.paragraph_search:
-            slppds = prune_overlapped_paragraphs(slppds)  # remove paragraphs that overlap
-            slppds.sort(reverse=True)
-            del slppds[a.top_n :]
-        else:
-            slppds = [max(slppds)]  # extract only the most similar paragraphs in the file
-
-        # update search results
-        search_results.extend(slppds)
-        if len(search_results) >= a.top_n:
-            trim_search_results(search_results, a.top_n)
-
-    trim_search_results(search_results, a.top_n)
     return search_results
 
 
@@ -227,12 +229,12 @@ def main():
     query_vec = model.encode(['\n'.join(lines)])
 
     count_document_files = 0
-    chunk_size = 1000
+    chunk_size = 500
 
     # search for document files that are similar to the query
     if a.verbose:
         print("", end="", file=sys.stderr, flush=True)
-    search_results: List[SLPPD] = []
+    search_results: List[SLPLD] = []
     t0 = time()
     try:
         for dfs in chunked_iter(expand_file_iter(a.file), chunk_size):

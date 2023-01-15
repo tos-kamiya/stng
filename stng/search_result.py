@@ -12,10 +12,10 @@ ANSI_ESCAPE_CLEAR_CUR_LINE = "\x1b[1K\n\x1b[1A"
 
 Vec = np.array
 Pos = Tuple[int, int]
-SLPPD = Tuple[float, int, Pos, List[str], str]  # similarity, length, pos, paragraph, document file
+SLPLD = Tuple[float, int, Pos, List[str], str]  # similarity, length, pos, lines, document file
 
 
-def prune_overlapped_paragraphs(slppds: List[SLPPD]) -> List[SLPPD]:
+def prune_overlapped_paragraphs(slppds: List[SLPLD]) -> List[SLPLD]:
     if not slppds:
         return slppds
     dropped_index_set = set()
@@ -66,12 +66,12 @@ def excerpt_text(query_vec: Vec, lines: List[str], model: SentenceTransformer, l
     return excerpt
 
 
-def trim_search_results(search_results: List[SLPPD], top_n: int):
+def trim_search_results(search_results: List[SLPLD], top_n: int):
     search_results.sort(reverse=True)
     del search_results[top_n:]
 
 
-def print_intermediate_search_result(search_results: List[SLPPD], done_files: int, elapsed_time: float):
+def print_intermediate_search_result(search_results: List[SLPLD], done_files: int, elapsed_time: float):
     if search_results:
         sim, para_len, pos, _para, df = search_results[0]
         print("%s[%d docs done in %.0fs, %.2f docs/s] cur top-1: %.4f %d %s:%d-%d" % (ANSI_ESCAPE_CLEAR_CUR_LINE, done_files, elapsed_time, done_files / elapsed_time, sim, para_len, df, pos[0] + 1, pos[1]), end="", file=sys.stderr, flush=True)
