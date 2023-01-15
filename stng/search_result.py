@@ -1,16 +1,17 @@
-from typing import Callable, List, Tuple
+from typing import List, Tuple
 
 import re
 import sys
 
 import numpy as np
+import numpy.typing as npt
 from sentence_transformers import SentenceTransformer
 
 from .iter_funcs import ranges_overwrapping
 
 ANSI_ESCAPE_CLEAR_CUR_LINE = "\x1b[1K\n\x1b[1A"
 
-Vec = np.array
+Vec = npt.NDArray
 Pos = Tuple[int, int]
 SLPLD = Tuple[float, int, Pos, List[str], str]  # similarity, length, pos, lines, document file
 
