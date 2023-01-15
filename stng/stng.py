@@ -1,4 +1,4 @@
-from typing import Iterable, Iterator, List, Optional
+from typing import Iterable, Iterator, List, Optional, Tuple
 
 from glob import iglob
 import io
@@ -15,7 +15,7 @@ import numpy as np
 from win_wildcard import expand_windows_wildcard, get_windows_shell
 from sentence_transformers import SentenceTransformer
 
-from .iter_funcs import chunked_iter, sliding_window_iter
+from .iter_funcs import sliding_window_iter
 from .scanners import Scanner, ScanError, ScanErrorNotFile
 from .search_result import ANSI_ESCAPE_CLEAR_CUR_LINE, SLPLD, excerpt_text, trim_search_results, print_intermediate_search_result, prune_overlapped_paragraphs
 from .search_result import Vec
@@ -43,7 +43,6 @@ class CLArgs(InitAttrsWKwArgs):
     window: int
     excerpt_length: int
     header: bool
-    workers: Optional[int]
     help: bool
     version: bool
     unix_wildcard: bool
@@ -67,7 +66,6 @@ Options:
   --query-file=QUERYFILE, -f QUERYFILE  Read query text from the file.
   --excerpt-length=CHARS, -t CHARS      Length of the text to be excerpted [default: {dec}].
   --header, -H                  Print the header line.
-  --workers=WORKERS, -j WORKERS         Worker process.
   --unix-wildcard, -u           Use Unix-style pattern expansion on Windows.
   --vv                          Show name of each input file (for debug).
 """.format(
@@ -119,48 +117,48 @@ def expand_file_iter(target_files: Iterable[str], windows_style: bool = False) -
                 yield f
 
 
-def find_similar_paragraphs(query_vec: Vec, doc_files: Iterable[str], model: SentenceTransformer, a: CLArgs) -> List[SLPLD]:
+DF_POS_LINES = Tuple[str, Tuple[int, int], List[str]]
+
+def calc_paras_similarity(search_results: List[SLPLD], query_vec: Vec, df_pos_line_it: Iterable[DF_POS_LINES], model: SentenceTransformer, paragraph_search: bool, top_n: int) -> None:
+    # for each paragraph in the file, calculate the similarity to the query
+    para_texts = ['\n'.join(lines[pos[0] : pos[1]]) for _df, pos, lines in df_pos_line_it]
+    para_vecs = model.encode(para_texts)
+
+    i = -1
+    for df, g in groupby(df_pos_line_it, key=lambda dpp: dpp[0]):
+        slppds: List[SLPLD] = []
+        for _df, pos, lines in g:
+            i += 1
+            para_vec = para_vecs[i]
+            sim = np.inner(query_vec, para_vec)
+            para_len = sum(len(L) for L in lines[pos[0] : pos[1]])
+            slppds.append((sim, para_len, pos, lines, df))
+
+        if not slppds:
+            continue  # for df
+
+        # pick up paragraphs for the file
+        if paragraph_search:
+            slppds = prune_overlapped_paragraphs(slppds)  # remove paragraphs that overlap
+            slppds.sort(reverse=True)
+            del slppds[top_n :]
+        else:
+            slppds = [max(slppds)]  # extract only the most similar paragraphs in the file
+
+        # update search results
+        if len(search_results) < top_n or slppds[0] > search_results[-1]:
+            search_results.extend(slppds)
+            if len(search_results) >= top_n:
+                trim_search_results(search_results, top_n)
+
+
+def chunked_para_iter(doc_file_it: Iterable[str], window: int, chunk_size: int, a_vv: bool) -> Iterator[Tuple[List[DF_POS_LINES], int]]:
     scanner = Scanner()
 
-    FLUSH_PARA_SIZE = 1000
-
-    search_results: List[SLPLD] = []
-    def flush_para(df_pos_paras):
-        # for each paragraph in the file, calculate the similarity to the query
-        para_texts = ['\n'.join(lines[pos[0] : pos[1]]) for _df, pos, lines in df_pos_paras]
-        para_vecs = model.encode(para_texts)
-
-        i = -1
-        for df, g in groupby(df_pos_paras, key=lambda dpp: dpp[0]):
-            slppds: List[SLPLD] = []
-            for _df, pos, lines in g:
-                i += 1
-                para_vec = para_vecs[i]
-                sim = np.inner(query_vec, para_vec)
-                para_len = sum(len(L) for L in lines[pos[0] : pos[1]])
-                slppds.append((sim, para_len, pos, lines, df))
-
-            if not slppds:
-                continue  # for df
-
-            # pick up paragraphs for the file
-            if a.paragraph_search:
-                slppds = prune_overlapped_paragraphs(slppds)  # remove paragraphs that overlap
-                slppds.sort(reverse=True)
-                del slppds[a.top_n :]
-            else:
-                slppds = [max(slppds)]  # extract only the most similar paragraphs in the file
-
-            # update search results
-            search_results.extend(slppds)
-            if len(search_results) >= a.top_n:
-                trim_search_results(search_results, a.top_n)
-
-        assert i == len(df_pos_paras) - 1
-
-    df_para_datas = []
-    for df in doc_files:
-        if a.vv:
+    df_pos_lines: List[DF_POS_LINES] = []
+    df_count: int = 0
+    for df in doc_file_it:
+        if a_vv:
             print(ANSI_ESCAPE_CLEAR_CUR_LINE + "> reading: %s" % df, file=sys.stderr, flush=True)
 
         # read lines from document file
@@ -173,24 +171,18 @@ def find_similar_paragraphs(query_vec: Vec, doc_files: Iterable[str], model: Sen
             continue
 
         # extract paragraphs
-        for pos in sliding_window_iter(len(lines), a.window):
-            df_para_datas.append((df, pos, lines))
+        for pos in sliding_window_iter(len(lines), window):
+            df_pos_lines.append((df, pos, lines))
 
-        if len(df_para_datas) >= FLUSH_PARA_SIZE:
-            flush_para(df_para_datas)
-            df_para_datas.clear()
+        df_count += 1
 
-    if df_para_datas:
-        flush_para(df_para_datas)
-        df_para_datas.clear()
-
-    return search_results
-
-
-def find_similar_paragraphs_i(arg_tuple):
-    # (query_vec, dfs, model, a) = arg_tuple
-    r = find_similar_paragraphs(*arg_tuple)
-    return r, arg_tuple[0]
+        if len(df_pos_lines) >= chunk_size:
+            yield df_pos_lines, df_count
+            df_pos_lines, df_count = [], 0
+    else:
+        if df_pos_lines:
+            yield df_pos_lines, df_count
+            df_pos_lines, df_count = [], 0
 
 
 def main():
@@ -237,10 +229,9 @@ def main():
     search_results: List[SLPLD] = []
     t0 = time()
     try:
-        for dfs in chunked_iter(expand_file_iter(a.file), chunk_size):
-            search_results.extend(find_similar_paragraphs(query_vec, dfs, model, a))
-            trim_search_results(search_results, a.top_n)
-            count_document_files += len(dfs)
+        for df_pos_lines, df_count in chunked_para_iter(expand_file_iter(a.file), a.window, chunk_size, a.vv):
+            calc_paras_similarity(search_results, query_vec, df_pos_lines, model, a.paragraph_search, a.top_n)
+            count_document_files += df_count
             if a.verbose:
                 print_intermediate_search_result(search_results, count_document_files, time() - t0)
     except FileNotFoundError as e:
