@@ -191,12 +191,6 @@ def main():
 
     argv = sys.argv[1:]
     for i, a in enumerate(argv):
-        if a == "--bin-dir":
-            print(os.path.join(_script_dir, "bin"))
-            return
-        if a == "--model-dir":
-            print(os.path.join(_script_dir, "models"))
-            return
         if a == "--expand-wildcard":
             file_pats = argv[i+1:]
             for fp in file_pats:
