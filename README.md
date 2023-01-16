@@ -29,6 +29,12 @@ Example of search:
 
 ## History
 
+#### 0.2.0
+
+* feat: new option --quote to show paragraph of the search result instead of excerpt
+* fix: optimization in reading pdf and docx files
+* fix: option -n was renamed to option -k
+
 #### 0.1.1
 
 * fix: replace model with sentence-transformers/stsb-xlm-r-multilingual
