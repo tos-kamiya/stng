@@ -16,7 +16,7 @@ from win_wildcard import expand_windows_wildcard, get_windows_shell
 from sentence_transformers import SentenceTransformer
 
 from .iter_funcs import sliding_window_iter
-from .scanners import Scanner, ScanError, ScanErrorNotFile
+from .dum_scanner import dum_scan, dum_scan_it, to_lines
 from .search_result import (
     ANSI_ESCAPE_CLEAR_CUR_LINE,
     SLPLD,
@@ -33,7 +33,7 @@ _script_dir = os.path.dirname(os.path.realpath(__file__))
 # DEFAULT_MODEL = 'sentence-transformers/all-MiniLM-L6-v2'
 DEFAULT_MODEL = "sentence-transformers/stsb-xlm-r-multilingual"
 VERSION = importlib.metadata.version("stng")
-DEFAULT_TOP_N = 20
+DEFAULT_TOP_K = 20
 DEFAULT_WINDOW_SIZE = 20
 DEFAULT_EXCERPT_CHARS = 80
 DEFAULT_PREFER_LONGER_THAN = 80
@@ -45,61 +45,60 @@ class CLArgs(InitAttrsWKwArgs):
     file: List[str]
     verbose: bool
     model: str
-    top_n: int
+    top_k: int
     paragraph_search: bool
     window: int
     excerpt_length: int
+    quote: bool
     header: bool
     help: bool
     version: bool
     unix_wildcard: bool
-    vv: bool
 
 
 __doc__: str = """Sentence-transformer-based Natural-language grep.
 
 Usage:
-  stng [options]  <query> <file>...
-  stng [options] -f QUERYFILE <file>...
-  stng --help
-  stng --version
+  {stng} [options] [-t CHARS|-q] <query> <file>...
+  {stng} [options] [-t CHARS|-q] -f QUERYFILE <file>...
+  {stng} --help
+  {stng} --version
 
 Options:
-  --verbose, -v                 Verbose.
-  --model=MODEL, -m MODEL       Model name [default: {dm}].
-  --top-n=NUM, -n NUM           Show top NUM files [default: {dtn}].
-  --paragraph-search, -p        Search paragraphs in documents.
-  --window=NUM, -w NUM          Line window size [default: {dws}].
-  --query-file=QUERYFILE, -f QUERYFILE  Read query text from the file.
-  --excerpt-length=CHARS, -t CHARS      Length of the text to be excerpted [default: {dec}].
-  --header, -H                  Print the header line.
-  --unix-wildcard, -u           Use Unix-style pattern expansion on Windows.
-  --vv                          Show name of each input file (for debug).
+  -v, --verbose                 Verbose.
+  -m MODEL, --model=MODEL       Model name [default: {dm}].
+  -k NUM, --top-k=NUM           Show top NUM files [default: {dtk}].
+  -p, --paragraph-search        Search paragraphs in documents.
+  -w NUM, --window=NUM          Line window size [default: {dws}].
+  -f QUERYFILE, --query-file=QUERYFILE  Read query text from the file.
+  -t CHARS, --excerpt-length=CHARS      Length of the text to be excerpted [default: {dec}].
+  -q, --quote                   Show text instead of excerpt.
+  -H, --header                  Print the header line.
+  -u, --unix-wildcard           Use Unix-style pattern expansion on Windows.
 """.format(
     dm=DEFAULT_MODEL,
-    dtn=DEFAULT_TOP_N,
+    dtk=DEFAULT_TOP_K,
     dws=DEFAULT_WINDOW_SIZE,
     dplt=DEFAULT_PREFER_LONGER_THAN,
     dec=DEFAULT_EXCERPT_CHARS,
+    stng="stng",
 )
 
 
 def do_extract_query_lines(query: Optional[str], query_file: Optional[str]) -> List[str]:
     if query == "-" or query_file == "-":
-        lines = sys.stdin.read().splitlines()
+        query = sys.stdin.read()
     elif query_file is not None:
-        scanner = Scanner()
-        try:
-            lines = scanner.scan(query_file)
-        except ScanError as e:
-            sys.exit("Error in reading query file: %s" % e)
-        finally:
-            del scanner
+        _fn, err, text = dum_scan(query_file)
+        if err is not None:
+            sys.exit("Error in reading query file: %s" % err)
+        query = text
     elif query is not None:
-        scanner = Scanner()
-        lines = scanner.to_lines(query)
+        pass
     else:
         assert False, "both query and query_file are None"
+    assert query is not None
+    lines = to_lines(query)
     return lines
 
 
@@ -137,7 +136,7 @@ def calc_paras_similarity(
     df_pos_lines_it: Iterable[DF_POS_LINES],
     model: SentenceTransformer,
     paragraph_search: bool,
-    top_n: int,
+    top_k: int,
 ) -> None:
     # for each paragraph in the file, calculate the similarity to the query
     para_texts = ["\n".join(lines[pos[0] : pos[1]]) for _df, pos, lines in df_pos_lines_it]
@@ -160,38 +159,28 @@ def calc_paras_similarity(
         if paragraph_search:
             slppds = prune_overlapped_paragraphs(slppds)  # remove paragraphs that overlap
             slppds.sort(reverse=True)
-            del slppds[top_n:]
+            del slppds[top_k:]
         else:
             slppds = [max(slppds)]  # extract only the most similar paragraphs in the file
 
         # update search results
-        if len(search_results) < top_n or slppds[0] > search_results[-1]:
+        if len(search_results) < top_k or slppds[0] > search_results[-1]:
             search_results.extend(slppds)
-            if len(search_results) >= top_n:
-                trim_search_results(search_results, top_n)
+            if len(search_results) >= top_k:
+                trim_search_results(search_results, top_k)
 
 
-def chunked_para_iter(
-    doc_file_it: Iterable[str], window: int, chunk_size: int, a_vv: bool
-) -> Iterator[Tuple[List[DF_POS_LINES], int]]:
-    scanner = Scanner()
-
+def chunked_para_iter(doc_file_it: Iterable[str], window: int, chunk_size: int) -> Iterator[Tuple[List[DF_POS_LINES], int]]:
     df_pos_lines: List[DF_POS_LINES] = []
     df_count: int = 0
-    for df in doc_file_it:
-        if a_vv:
-            print(ANSI_ESCAPE_CLEAR_CUR_LINE + "> reading: %s" % df, file=sys.stderr, flush=True)
-
-        # read lines from document file
-        try:
-            lines = scanner.scan(df)
-        except ScanErrorNotFile as e:
-            continue
-        except ScanError as e:
-            print(ANSI_ESCAPE_CLEAR_CUR_LINE + "> Warning: %s" % e, file=sys.stderr, flush=True)
+    for df, err, text in dum_scan_it(doc_file_it):
+        if err is not None:
+            print(ANSI_ESCAPE_CLEAR_CUR_LINE + "[Warning] reading file %s: %s" % (df, err), file=sys.stderr, flush=True)
             continue
 
         # extract paragraphs
+        assert text is not None
+        lines = to_lines(text)
         for pos in sliding_window_iter(len(lines), window):
             df_pos_lines.append((df, pos, lines))
 
@@ -244,8 +233,8 @@ def main():
     search_results: List[SLPLD] = []
     t0 = time()
     try:
-        for df_pos_lines, df_count in chunked_para_iter(expand_file_iter(a.file), a.window, chunk_size, a.vv):
-            calc_paras_similarity(search_results, query_vec, df_pos_lines, model, a.paragraph_search, a.top_n)
+        for df_pos_lines, df_count in chunked_para_iter(expand_file_iter(a.file), a.window, chunk_size):
+            calc_paras_similarity(search_results, query_vec, df_pos_lines, model, a.paragraph_search, a.top_k)
             count_document_files += df_count
             if a.verbose:
                 print_intermediate_search_result(search_results, count_document_files, time() - t0)
@@ -257,27 +246,33 @@ def main():
         if a.verbose:
             print(
                 ANSI_ESCAPE_CLEAR_CUR_LINE
-                + "> Interrupted. Shows the search results up to now.\n"
-                + "> number of document files: %d" % count_document_files,
+                + "[Warning] Interrupted. Shows the search results up to now.\n"
+                + "[Info] number of document files: %d" % count_document_files,
                 file=sys.stderr,
                 flush=True,
             )
     else:
         if a.verbose:
             print(
-                ANSI_ESCAPE_CLEAR_CUR_LINE + "> number of document files: %d" % count_document_files,
+                ANSI_ESCAPE_CLEAR_CUR_LINE + "[Info] number of document files: %d" % count_document_files,
                 file=sys.stderr,
                 flush=True,
             )
 
     # output search results
-    trim_search_results(search_results, a.top_n)
+    trim_search_results(search_results, a.top_k)
     if a.header:
         print("\t".join(["sim", "chars", "location", "text"]))
     for sim, para_len, (b, e), lines, df in search_results:
         para = lines[b:e]
-        excerpt = excerpt_text(query_vec, para, model, a.excerpt_length)
-        print("%.4f\t%d\t%s:%d-%d\t%s" % (sim, para_len, df, b + 1, e, excerpt))
+        if a.quote:
+            print("%.4f\t%d\t%s:%d-%d" % (sim, para_len, df, b + 1, e))
+            for L in para:
+                print("> %s" % L)
+            print()
+        else:
+            excerpt = excerpt_text(query_vec, para, model, a.excerpt_length)
+            print("%.4f\t%d\t%s:%d-%d\t%s" % (sim, para_len, df, b + 1, e, excerpt))
 
 
 if __name__ == "__main__":

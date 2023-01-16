@@ -1,6 +1,5 @@
 from typing import List, Tuple
 
-import re
 import sys
 
 import numpy as np
@@ -31,16 +30,9 @@ def prune_overlapped_paragraphs(slppds: List[SLPLD]) -> List[SLPLD]:
     return [ipsrls for i, ipsrls in enumerate(slppds) if i not in dropped_index_set]
 
 
-PAT_ZsPlus = re.compile(
-    "[\u00020\u00a0\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000]+"
-)
-
-
 def excerpt_text(query_vec: Vec, lines: List[str], model: SentenceTransformer, length_to_excerpt: int) -> str:
     if not lines:
         return ""
-
-    lines = [re.sub(PAT_ZsPlus, " ", L) for L in lines]
 
     if len(lines) == 1:
         return lines[0][:length_to_excerpt]
@@ -78,7 +70,7 @@ def print_intermediate_search_result(search_results: List[SLPLD], done_files: in
     if search_results:
         sim, para_len, pos, _para, df = search_results[0]
         print(
-            "%s[%d docs done in %.0fs, %.2f docs/s] cur top-1: %.4f %d %s:%d-%d"
+            "%s[Info] %d docs done in %.0fs, %.2f docs/s. cur top-1: %.4f %d %s:%d-%d"
             % (
                 ANSI_ESCAPE_CLEAR_CUR_LINE,
                 done_files,
