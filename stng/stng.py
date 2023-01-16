@@ -17,14 +17,21 @@ from sentence_transformers import SentenceTransformer
 
 from .iter_funcs import sliding_window_iter
 from .scanners import Scanner, ScanError, ScanErrorNotFile
-from .search_result import ANSI_ESCAPE_CLEAR_CUR_LINE, SLPLD, excerpt_text, trim_search_results, print_intermediate_search_result, prune_overlapped_paragraphs
+from .search_result import (
+    ANSI_ESCAPE_CLEAR_CUR_LINE,
+    SLPLD,
+    excerpt_text,
+    trim_search_results,
+    print_intermediate_search_result,
+    prune_overlapped_paragraphs,
+)
 from .search_result import Vec
 
 
 _script_dir = os.path.dirname(os.path.realpath(__file__))
 
 # DEFAULT_MODEL = 'sentence-transformers/all-MiniLM-L6-v2'
-DEFAULT_MODEL = 'sentence-transformers/stsb-xlm-r-multilingual'
+DEFAULT_MODEL = "sentence-transformers/stsb-xlm-r-multilingual"
 VERSION = importlib.metadata.version("stng")
 DEFAULT_TOP_N = 20
 DEFAULT_WINDOW_SIZE = 20
@@ -69,12 +76,16 @@ Options:
   --unix-wildcard, -u           Use Unix-style pattern expansion on Windows.
   --vv                          Show name of each input file (for debug).
 """.format(
-    dm=DEFAULT_MODEL, dtn=DEFAULT_TOP_N, dws=DEFAULT_WINDOW_SIZE, dplt=DEFAULT_PREFER_LONGER_THAN, dec=DEFAULT_EXCERPT_CHARS
+    dm=DEFAULT_MODEL,
+    dtn=DEFAULT_TOP_N,
+    dws=DEFAULT_WINDOW_SIZE,
+    dplt=DEFAULT_PREFER_LONGER_THAN,
+    dec=DEFAULT_EXCERPT_CHARS,
 )
 
 
 def do_extract_query_lines(query: Optional[str], query_file: Optional[str]) -> List[str]:
-    if query == '-' or query_file == '-':
+    if query == "-" or query_file == "-":
         lines = sys.stdin.read().splitlines()
     elif query_file is not None:
         scanner = Scanner()
@@ -119,13 +130,21 @@ def expand_file_iter(target_files: Iterable[str], windows_style: bool = False) -
 
 DF_POS_LINES = Tuple[str, Tuple[int, int], List[str]]
 
-def calc_paras_similarity(search_results: List[SLPLD], query_vec: Vec, df_pos_line_it: Iterable[DF_POS_LINES], model: SentenceTransformer, paragraph_search: bool, top_n: int) -> None:
+
+def calc_paras_similarity(
+    search_results: List[SLPLD],
+    query_vec: Vec,
+    df_pos_lines_it: Iterable[DF_POS_LINES],
+    model: SentenceTransformer,
+    paragraph_search: bool,
+    top_n: int,
+) -> None:
     # for each paragraph in the file, calculate the similarity to the query
-    para_texts = ['\n'.join(lines[pos[0] : pos[1]]) for _df, pos, lines in df_pos_line_it]
+    para_texts = ["\n".join(lines[pos[0] : pos[1]]) for _df, pos, lines in df_pos_lines_it]
     para_vecs = model.encode(para_texts)
 
     i = -1
-    for df, g in groupby(df_pos_line_it, key=lambda dpp: dpp[0]):
+    for df, g in groupby(df_pos_lines_it, key=lambda dpp: dpp[0]):
         slppds: List[SLPLD] = []
         for _df, pos, lines in g:
             i += 1
@@ -141,7 +160,7 @@ def calc_paras_similarity(search_results: List[SLPLD], query_vec: Vec, df_pos_li
         if paragraph_search:
             slppds = prune_overlapped_paragraphs(slppds)  # remove paragraphs that overlap
             slppds.sort(reverse=True)
-            del slppds[top_n :]
+            del slppds[top_n:]
         else:
             slppds = [max(slppds)]  # extract only the most similar paragraphs in the file
 
@@ -152,7 +171,9 @@ def calc_paras_similarity(search_results: List[SLPLD], query_vec: Vec, df_pos_li
                 trim_search_results(search_results, top_n)
 
 
-def chunked_para_iter(doc_file_it: Iterable[str], window: int, chunk_size: int, a_vv: bool) -> Iterator[Tuple[List[DF_POS_LINES], int]]:
+def chunked_para_iter(
+    doc_file_it: Iterable[str], window: int, chunk_size: int, a_vv: bool
+) -> Iterator[Tuple[List[DF_POS_LINES], int]]:
     scanner = Scanner()
 
     df_pos_lines: List[DF_POS_LINES] = []
@@ -192,7 +213,7 @@ def main():
     argv = sys.argv[1:]
     for i, a in enumerate(argv):
         if a == "--expand-wildcard":
-            file_pats = argv[i+1:]
+            file_pats = argv[i + 1 :]
             for fp in file_pats:
                 print("%s:" % fp)
                 for f in expand_file_iter([fp], windows_style=True):
@@ -212,7 +233,7 @@ def main():
     model = SentenceTransformer(a.model)
 
     lines = do_extract_query_lines(a.query, a.query_file)
-    query_vec = model.encode(['\n'.join(lines)])
+    query_vec = model.encode(["\n".join(lines)])
 
     count_document_files = 0
     chunk_size = 500
@@ -234,10 +255,20 @@ def main():
         sys.exit(str(e))
     except KeyboardInterrupt:
         if a.verbose:
-            print(ANSI_ESCAPE_CLEAR_CUR_LINE + "> Interrupted. Shows the search results up to now.\n" + "> number of document files: %d" % count_document_files, file=sys.stderr, flush=True)
+            print(
+                ANSI_ESCAPE_CLEAR_CUR_LINE
+                + "> Interrupted. Shows the search results up to now.\n"
+                + "> number of document files: %d" % count_document_files,
+                file=sys.stderr,
+                flush=True,
+            )
     else:
         if a.verbose:
-            print(ANSI_ESCAPE_CLEAR_CUR_LINE + "> number of document files: %d" % count_document_files, file=sys.stderr, flush=True)
+            print(
+                ANSI_ESCAPE_CLEAR_CUR_LINE + "> number of document files: %d" % count_document_files,
+                file=sys.stderr,
+                flush=True,
+            )
 
     # output search results
     trim_search_results(search_results, a.top_n)

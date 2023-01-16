@@ -5,7 +5,6 @@ import os
 import platform
 import re
 import subprocess
-import unicodedata
 import uuid
 
 
@@ -39,8 +38,10 @@ else:
 class ScanError(Exception):
     pass
 
+
 class ScanErrorNotFile(ScanError):
     pass
+
 
 class Scanner:
     def scan(self, file_name: str) -> List[str]:
@@ -116,7 +117,9 @@ else:
             raise ScanError("Error: pdftotext is not installed.")
         else:
             if p.returncode != 0:
-                raise ScanError("ScanError: %s, file: %s, (%s)" % (p.stderr.decode("utf-8").rstrip(), repr(file_name), p.stdout))
+                raise ScanError(
+                    "ScanError: %s, file: %s, (%s)" % (p.stderr.decode("utf-8").rstrip(), repr(file_name), p.stdout)
+                )
             with open_file(tempf) as f:
                 text = f.read()
             return text
