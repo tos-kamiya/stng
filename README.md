@@ -21,6 +21,7 @@ Before installing `stng` with pip, please install the following dependencies.
 Windows:
 
 ```
+choco install vcredist140
 choco install poppler
 choco install pandoc
 python -m pip install docopt-ng
