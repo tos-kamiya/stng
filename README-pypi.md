@@ -1,5 +1,7 @@
 # stng
 
+**⚠️ HIGHLY EXPERIMENTAL**
+
 stng, a sentence-transformer-based natural-language grep.
 
 The `stng` is an off-the-shelf grep-like tool that performs semantic similarity search.
@@ -8,8 +10,9 @@ Supports searching within text files (.txt), PDF files (.pdf), and MS Word files
 
 It is recommended to run this tool on a PC equipped with a GPU, as it performs calculations with PyTorch.
 
-**⚠️ ITS HIGHLY EXPERIMENTAL.**
+Please refer to the [Installation section](https://github.com/tos-kamiya/stng#installation) on the homepage for installation instructions.
 
 Screenshot:
 
 ![](https://github.com/tos-kamiya/stng/blob/main/docs/images/run1.png?raw=True)
+
