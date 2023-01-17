@@ -27,7 +27,11 @@ Example of search:
 
 * Reimers, N., Gurevych, I., Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks, Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing, 2019. https://arxiv.org/abs/1908.10084
 
-## History
+## Release History
+
+#### 0.2.1
+
+* fix: some of the input files were not being read
 
 #### 0.2.0
 
