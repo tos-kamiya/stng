@@ -24,53 +24,6 @@ def to_lines(text: str) -> List[str]:
 class FileTooLarge(ValueError):
     pass
 
-class PDFToTextError(ValueError):
-    pass
-
-
-if platform.system() != "Windows":
-
-    def pdf_scan(file_name: str) -> Tuple[Optional[Exception], Optional[str]]:
-        try:
-            import pdftotext
-        except ImportError:
-            return PDFToTextError("pdftotext is not installed"), None
-
-        try:
-            with open(file_name, "rb") as f:
-                pdf = pdftotext.PDF(f)
-        except pdftotext.Error as e:
-            return e, None
-
-        page_texts = [page for page in pdf]
-        text = "".join(page_texts)
-        # text = re.sub(r'(cid:\d+)', '', text)  # remove unknown glyphs
-
-        return None, text
-
-else:
-    import tempfile
-
-    _system_temp_dir = tempfile.gettempdir()
-
-    def pdf_scan(file_name: str) -> Tuple[Optional[Exception], Optional[str]]:
-        tempf = os.path.join(_system_temp_dir, "%s.txt" % str(uuid.uuid4()))
-        try:
-            cmd = ["pdftotext.exe", file_name, tempf]
-            p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except FileNotFoundError:
-            return PDFToTextError("pdftotext is not installed"), None
-        else:
-            if p.returncode != 0:
-                return PDFToTextError("Error: reading file: %s, (%s)" % (p.stderr.decode("utf-8").rstrip(), repr(file_name), p.stdout)), None
-            with open(tempf, 'r', encoding='UTF-8', errors='replace') as f:
-                text = f.read()
-            return None, text
-        finally:
-            if os.path.exists(tempf):
-                os.remove(tempf)
-
-
 class ExecGetOutputThread(threading.Thread):
     def __init__(self, filename: str):
         super().__init__()
@@ -86,11 +39,8 @@ class ExecGetOutputThread(threading.Thread):
 
         ext = os.path.splitext(fn)[1].lower()
         if ext == '.pdf':
-            err, text = pdf_scan(fn)
-            self.retval = (fn, err, text)
-            return
-
-        if ext in ['.docx', '.odt', '.epub']:
+            cmd = ['pdftotext', '-nopgbrk', '-q', fn, '-']
+        elif ext in ['.docx', '.odt', '.epub']:
             cmd = ['pandoc', '--from=%s' % ext[1:], '--to=plain', '--wrap=none', '--markdown-headings=atx', '--quiet', fn]
         else:
             cmd = None
