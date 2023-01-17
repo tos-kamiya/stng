@@ -25,7 +25,7 @@ from .search_result import (
     print_intermediate_search_result,
     prune_overlapped_paragraphs,
 )
-from .search_result import Vec
+from .search_result import DoneDocFileInfo, Vec
 
 
 _script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -144,55 +144,57 @@ def calc_paras_similarity(
 
     i = -1
     for df, g in groupby(df_pos_lines_it, key=lambda dpp: dpp[0]):
-        slppds: List[SLPLD] = []
+        slplds: List[SLPLD] = []
         for _df, pos, lines in g:
             i += 1
             para_vec = para_vecs[i]
             sim = np.inner(query_vec, para_vec)
             para_len = sum(len(L) for L in lines[pos[0] : pos[1]])
-            slppds.append((sim, para_len, pos, lines, df))
-
-        if not slppds:
-            continue  # for df
+            slplds.append((sim, para_len, pos, lines, df))
 
         # pick up paragraphs for the file
         if paragraph_search:
-            slppds = prune_overlapped_paragraphs(slppds)  # remove paragraphs that overlap
-            slppds.sort(reverse=True)
-            del slppds[top_k:]
+            slplds = prune_overlapped_paragraphs(slplds)  # remove paragraphs that overlap
+            slplds.sort(reverse=True)
+            del slplds[top_k:]
         else:
-            slppds = [max(slppds)]  # extract only the most similar paragraphs in the file
+            slplds = [max(slplds)]  # extract only the most similar paragraphs in the file
 
         # update search results
-        if len(search_results) < top_k or slppds[0] > search_results[-1]:
-            search_results.extend(slppds)
+        if len(search_results) < top_k or slplds[0] > search_results[-1]:
+            search_results.extend(slplds)
             if len(search_results) >= top_k:
                 trim_search_results(search_results, top_k)
 
 
-def chunked_para_iter(doc_file_it: Iterable[str], window: int, chunk_size: int) -> Iterator[Tuple[List[DF_POS_LINES], int]]:
+def chunked_para_iter(doc_file_it: Iterable[str], window: int, chunk_size: int) -> Iterator[Tuple[List[DF_POS_LINES], DoneDocFileInfo]]:
     df_pos_lines: List[DF_POS_LINES] = []
-    df_count: int = 0
+    df_info: DoneDocFileInfo = DoneDocFileInfo()
     for df, err, text in dum_scan_it(doc_file_it):
         if err is not None:
             print(ANSI_ESCAPE_CLEAR_CUR_LINE + "[Warning] reading file %s: %s" % (df, err), file=sys.stderr, flush=True)
+            df_info.wo_para += 1
             continue
 
         # extract paragraphs
         assert text is not None
+        len_df_pos_lines = len(df_pos_lines)
         lines = to_lines(text)
         for pos in sliding_window_iter(len(lines), window):
             df_pos_lines.append((df, pos, lines))
 
-        df_count += 1
+        if len(df_pos_lines) > len_df_pos_lines:
+            df_info.w_para += 1
+        else:
+            df_info.wo_para += 1
 
         if len(df_pos_lines) >= chunk_size:
-            yield df_pos_lines, df_count
-            df_pos_lines, df_count = [], 0
+            yield df_pos_lines, df_info
+            df_pos_lines, df_info = [], DoneDocFileInfo()
     else:
         if df_pos_lines:
-            yield df_pos_lines, df_count
-            df_pos_lines, df_count = [], 0
+            yield df_pos_lines, df_info
+            df_pos_lines, df_info = [], DoneDocFileInfo()
 
 
 def main():
@@ -224,20 +226,20 @@ def main():
     lines = do_extract_query_lines(a.query, a.query_file)
     query_vec = model.encode(["\n".join(lines)])
 
-    count_document_files = 0
     chunk_size = 500
 
     # search for document files that are similar to the query
     if a.verbose:
         print("", end="", file=sys.stderr, flush=True)
     search_results: List[SLPLD] = []
+    df_info: DoneDocFileInfo = DoneDocFileInfo()
     t0 = time()
     try:
-        for df_pos_lines, df_count in chunked_para_iter(expand_file_iter(a.file), a.window, chunk_size):
+        for df_pos_lines, di in chunked_para_iter(expand_file_iter(a.file), a.window, chunk_size):
             calc_paras_similarity(search_results, query_vec, df_pos_lines, model, a.paragraph_search, a.top_k)
-            count_document_files += df_count
+            df_info += di
             if a.verbose:
-                print_intermediate_search_result(search_results, count_document_files, time() - t0)
+                print_intermediate_search_result(search_results, df_info, time() - t0)
     except FileNotFoundError as e:
         if a.verbose:
             print(ANSI_ESCAPE_CLEAR_CUR_LINE, file=sys.stderr, flush=True)
@@ -246,18 +248,18 @@ def main():
         if a.verbose:
             print(
                 ANSI_ESCAPE_CLEAR_CUR_LINE
-                + "[Warning] Interrupted. Shows the search results up to now.\n"
-                + "[Info] number of document files: %d" % count_document_files,
+                + "[Warning] Interrupted. Shows the search results up to now.\n",
                 file=sys.stderr,
                 flush=True,
             )
-    else:
-        if a.verbose:
-            print(
-                ANSI_ESCAPE_CLEAR_CUR_LINE + "[Info] number of document files: %d" % count_document_files,
-                file=sys.stderr,
-                flush=True,
-            )
+    if a.verbose:
+        print(
+            ANSI_ESCAPE_CLEAR_CUR_LINE
+            + "[Info] document files with paragraphs: %d\n" % df_info.w_para
+            + "[Info] skipped document files (from which no paragraph extracted): %d\n" % df_info.wo_para,
+            file=sys.stderr,
+            flush=True,
+        )
 
     # output search results
     trim_search_results(search_results, a.top_k)

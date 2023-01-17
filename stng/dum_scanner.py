@@ -13,7 +13,6 @@ import html2text
 DOC_FILE_SIZE_LIMIT = 128 * 1024 * 1024  # 128M
 
 
-
 def to_lines(text: str) -> List[str]:
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x20\x7f-\x9f]+", " ", text)
     text = re.sub(r"[\u0020\u00a0\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000]+", " ", text)
@@ -127,14 +126,13 @@ def dum_scan(filename: str) -> Tuple[str, Optional[Exception], Optional[str]]:
 def dum_scan_it(filename_it: Iterable[str], max_workers: int = 12) -> Iterator[Tuple[str, Optional[Exception], Optional[str]]]:
     que = []
     for fn in filename_it:
-        if len(que) < max_workers:
-            th = ExecGetOutputThread(fn)
-            th.start()
-            que.append(th)
-        else:
+        if len(que) >= max_workers:
             th = que.pop(0)
             th.join()
             yield th.retval
+        th = ExecGetOutputThread(fn)
+        th.start()
+        que.append(th)
     while que:
         th = que.pop(0)
         th.join()
