@@ -63,6 +63,10 @@ Example of search:
 
 * Reimers, N., Gurevych, I., Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks, Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing, 2019. https://arxiv.org/abs/1908.10084
 
+## Todo
+
+- [ ] Change PDF text extraction tool to GhostScript for easier installation on Windows
+
 ## Release History
 
 #### 0.3.0
