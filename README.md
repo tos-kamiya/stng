@@ -69,6 +69,10 @@ Example of search:
 
 ## Release History
 
+#### 0.3.1
+
+* fix: workaround code to avoid warning on parallel execution of a tokenizer
+
 #### 0.3.0
 
 * fix: change to use a `pdftotext` command (instead of a library) to simplify installation
