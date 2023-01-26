@@ -1,10 +1,12 @@
 from typing import Iterable, Iterator, List, Optional, Tuple
 
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "true"  # to avoid huggingface/tokenizers's warning: "The current process just got forked, after parallelism has already been used. ..."
+
 from glob import iglob
 import io
 import importlib
 from itertools import groupby
-import os
 import platform
 import sys
 from time import time
