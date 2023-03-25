@@ -1,5 +1,7 @@
 # stng
 
+⚠️ **ChatGPT or Office 365 Copilot is going to be the solution that I wanted to achieve for this project. So this project has been moved to the archive.**
+
 stng, a sentence-transformer-based natural-language grep.
 
 The `stng` is an off-the-shelf grep-like tool that performs semantic similarity search.
